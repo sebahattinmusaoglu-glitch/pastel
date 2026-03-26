@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pastel Sudoku</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; overflow-x: hidden; touch-action: manipulation; }
+        #root { min-height: 100vh; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useRef } = React;
+
+        // ─────────────────────────────────────────────
+        // THEME DEFINITIONS
+        // ─────────────────────────────────────────────
+        const THEMES = {
+          spring: {
+            name: "Spring Blossom",
+            bg: "#fdf6f0", surface: "#fff8f3", primary: "#f9a8c9", primaryLight: "#fde8f2",
+            secondary: "#a8d8a8", text: "#5a3e4b", textLight: "#9b7b88", border: "#f0d4e4",
+            cellBg: "#ffffff", cellSelected: "#fde8f2", cellHighlight: "#fef3e8", cellBlock: "#fdf0f6",
+            errorBg: "#ffe4e4", errorText: "#e05a5a", given: "#5a3e4b", user: "#c2557a",
+            numpad: "#fde8f2", shadow: "rgba(249,168,201,0.25)", adBg: "#fef5fb", adBorder: "#f9c8e0",
+            gold: "#d4a017", goldLight: "#fef8e1", goldBorder: "#f0d060",
+          },
+          ocean: {
+            name: "Ocean Mist",
+            bg: "#f0f6fd", surface: "#f5f9ff", primary: "#93c5e8", primaryLight: "#dceefa",
+            secondary: "#a8c8e8", text: "#2c4a6e", textLight: "#6a8faf", border: "#c8dff2",
+            cellBg: "#ffffff", cellSelected: "#dceefa", cellHighlight: "#edf5fc", cellBlock: "#f0f8ff",
+            errorBg: "#ffe4e4", errorText: "#e05a5a", given: "#1e3a5a", user: "#2e7abf",
+            numpad: "#dceefa", shadow: "rgba(147,197,232,0.25)", adBg: "#f0f8ff", adBorder: "#c0dfef",
+            gold: "#b8860b", goldLight: "#fdf6dc", goldBorder: "#e8d080",
+          },
+          cloudy: {
+            name: "Cloudy Grey",
+            bg: "#f4f4f7", surface: "#f8f8fb", primary: "#b8b8d0", primaryLight: "#e8e8f4",
+            secondary: "#c8c8e0", text: "#3a3a5a", textLight: "#7a7a9a", border: "#d8d8e8",
+            cellBg: "#ffffff", cellSelected: "#e8e8f4", cellHighlight: "#f0f0f8", cellBlock: "#f5f5fa",
+            errorBg: "#ffe4e4", errorText: "#d05050", given: "#2a2a4a", user: "#5a5a9a",
+            numpad: "#e8e8f4", shadow: "rgba(184,184,208,0.25)", adBg: "#f5f5fa", adBorder: "#d0d0e8",
+            gold: "#a07800", goldLight: "#faf4dc", goldBorder: "#d8c870",
+          },
+        };
+
+        const STORAGE_KEY = "sudoku_best_times_v1";
+
+        function loadBestTimes() {
+          try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (!raw) return { easy: null, medium: null, hard: null };
+            const parsed = JSON.parse(raw);
+            return {
+              easy:   typeof parsed.easy   === "number" ? parsed.easy   : null,
+              medium: typeof parsed.medium === "number" ? parsed.medium : null,
+              hard:   typeof parsed.hard   === "number" ? parsed.hard   : null,
+            };
+          } catch { return { easy: null, medium: null, hard: null }; }
+        }
+
+        function saveBestTimes(times) {
+          try { localStorage.setItem(STORAGE_KEY, JSON.stringify(times)); } catch { }
+        }
+
+        function isValid(board, row, col, num) {
+          for (let i = 0; i < 9; i++) {
+            if (board[row][i] === num) return false;
+            if (board[i][col] === num) return false;
+          }
+          const boxRow = Math.floor(row / 3) * 3;
+          const boxCol = Math.floor(col / 3) * 3;
+          for (let r = 0; r < 3; r++)
+            for (let c = 0; c < 3; c++)
+              if (board[boxRow + r][boxCol + c] === num) return false;
+          return true;
+        }
+
+        function fillBoard(board) {
+          for (let row = 0; row < 9; row++) {
+            for (let col = 0; col < 9; col++) {
+              if (board[row][col] === 0) {
+                const nums = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+                for (const num of nums) {
+                  if (isValid(board, row, col, num)) {
+                    board[row][col] = num;
+                    if (fillBoard(board)) return true;
+                    board[row][col] = 0;
+                  }
+                }
+                return false;
+              }
+            }
+          }
+          return true;
+        }
+
+        function shuffle(arr) {
+          const a = [...arr];
+          for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [a[i], a[j]] = [a[j], a[i]];
+          }
+          return a;
+        }
+
+        function generatePuzzle(difficulty) {
+          const solution = Array.from({ length: 9 }, () => Array(9).fill(0));
+          fillBoard(solution);
+          const removeCount = { easy: 36, medium: 46, hard: 54 }[difficulty] ?? 46;
+          const puzzle = solution.map((r) => [...r]);
+          const cells = shuffle([...Array(81).keys()]);
+          let removed = 0;
+          for (const idx of cells) {
+            if (removed >= removeCount) break;
+            puzzle[Math.floor(idx / 9)][idx % 9] = 0;
+            removed++;
+          }
+          return { puzzle, solution };
+        }
+
+        function getConflicts(board) {
+          const conflicts = new Set();
+          for (let row = 0; row < 9; row++) {
+            for (let col = 0; col < 9; col++) {
+              const val = board[row][col];
+              if (!val) continue;
+              for (let i = 0; i < 9; i++) {
+                if (i !== col && board[row][i] === val) { conflicts.add(`${row}-${col}`); conflicts.add(`${row}-${i}`); }
+                if (i !== row && board[i][col] === val) { conflicts.add(`${row}-${col}`); conflicts.add(`${i}-${col}`); }
+              }
+              const br = Math.floor(row / 3) * 3, bc = Math.floor(col / 3) * 3;
+              for (let r = 0; r < 3; r++)
+                for (let c = 0; c < 3; c++) {
+                  const rr = br + r, cc = bc + c;
+                  if ((rr !== row || cc !== col) && board[rr][cc] === val) {
+                    conflicts.add(`${row}-${col}`); conflicts.add(`${rr}-${cc}`);
+                  }
+                }
+            }
+          }
+          return conflicts;
+        }
+
+        function isSolved(board, solution) {
+          for (let r = 0; r < 9; r++)
+            for (let c = 0; c < 9; c++)
+              if (board[r][c] !== solution[r][c]) return false;
+          return true;
+        }
+
+        function formatTime(s) {
+          if (s === null || s === undefined) return "--:--";
+          return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+        }
+
+        function SudokuApp() {
+          const [themeKey, setThemeKey] = useState("spring");
+          const theme = THEMES[themeKey];
+          const [difficulty, setDifficulty] = useState("medium");
+          const [puzzle, setPuzzle] = useState(null);
+          const [solution, setSolution] = useState(null);
+          const [board, setBoard] = useState(null);
+          const [history, setHistory] = useState([]);
+          const [selected, setSelected] = useState(null);
+          const [conflicts, setConflicts] = useState(new Set());
+          const [solved, setSolved] = useState(false);
+          const [showSettings, setShowSettings] = useState(false);
+          const [showCongrats, setShowCongrats] = useState(false);
+          const [isNewRecord, setIsNewRecord] = useState(false);
+          const [timer, setTimer] = useState(0);
+          const [timerStarted, setTimerStarted] = useState(false);
+          const [paused, setPaused] = useState(false);
+          const [finalTime, setFinalTime] = useState(0);
+          const timerRef = useRef(null);
+          const timerVal = useRef(0);
+          const [bestTimes, setBestTimes] = useState(() => loadBestTimes());
+
+          useEffect(() => { timerVal.current = timer; }, [timer]);
+
+          const startGame = useCallback((diff = difficulty) => {
+            const { puzzle: p, solution: s } = generatePuzzle(diff);
+            setPuzzle(p); setSolution(s); setBoard(p.map((r) => [...r]));
+            setHistory([]); setSelected(null); setConflicts(new Set());
+            setSolved(false); setShowCongrats(false); setIsNewRecord(false);
+            setTimer(0); setTimerStarted(false); setPaused(false); setFinalTime(0);
+          }, [difficulty]);
+
+          useEffect(() => { startGame(); }, []);
+
+          useEffect(() => {
+            clearInterval(timerRef.current);
+            if (timerStarted && !paused && !solved) {
+              timerRef.current = setInterval(() => setTimer((t) => t + 1), 1000);
+            }
+            return () => clearInterval(timerRef.current);
+          }, [timerStarted, paused, solved]);
+
+          const togglePause = () => {
+            if (!timerStarted || solved) return;
+            setPaused((p) => !p); setSelected(null);
+          };
+
+          const enterNumber = useCallback((num) => {
+            if (!selected || !board || !puzzle || paused) return;
+            const { row, col } = selected;
+            if (puzzle[row][col] !== 0) return;
+            if (!timerStarted) setTimerStarted(true);
+            setHistory((h) => [...h, board.map((r) => [...r])]);
+            const newBoard = board.map((r) => [...r]);
+            newBoard[row][col] = num;
+            setBoard(newBoard);
+            const newConflicts = getConflicts(newBoard);
+            setConflicts(newConflicts);
+            if (newConflicts.size === 0 && isSolved(newBoard, solution)) {
+              const elapsed = timerVal.current;
+              setSolved(true); setFinalTime(elapsed);
+              setBestTimes((prev) => {
+                const prevBest = prev[difficulty];
+                const newRecord = prevBest === null || elapsed < prevBest;
+                setIsNewRecord(newRecord);
+                const updated = { ...prev, [difficulty]: newRecord ? elapsed : prevBest };
+                saveBestTimes(updated); return updated;
+              });
+              setTimeout(() => setShowCongrats(true), 300);
+            }
+          }, [selected, board, puzzle, solution, timerStarted, paused, difficulty]);
+
+          const clearCell = useCallback(() => enterNumber(0), [enterNumber]);
+
+          const undo = useCallback(() => {
+            if (!history.length || paused) return;
+            const prev = history[history.length - 1];
+            setBoard(prev); setHistory((h) => h.slice(0, -1)); setConflicts(getConflicts(prev));
+          }, [history, paused]);
+
+          useEffect(() => {
+            const handler = (e) => {
+              if (paused) return;
+              if (e.key >= "1" && e.key <= "9") enterNumber(Number(e.key));
+              if (e.key === "Backspace" || e.key === "Delete" || e.key === "0") clearCell();
+              if (e.key === "z" && (e.ctrlKey || e.metaKey)) undo();
+              if (!selected) return;
+              const { row, col } = selected;
+              if (e.key === "ArrowUp" && row > 0) setSelected({ row: row - 1, col });
+              if (e.key === "ArrowDown" && row < 8) setSelected({ row: row + 1, col });
+              if (e.key === "ArrowLeft" && col > 0) setSelected({ row, col: col - 1 });
+              if (e.key === "ArrowRight" && col < 8) setSelected({ row, col: col + 1 });
+            };
+            window.addEventListener("keydown", handler);
+            return () => window.removeEventListener("keydown", handler);
+          }, [enterNumber, clearCell, undo, selected, paused]);
+
+          if (!board) return <div style={{ background: theme.bg, minHeight: "100vh" }} />;
+
+          const highlightSet = new Set();
+          if (selected && !paused) {
+            const { row, col } = selected;
+            for (let i = 0; i < 9; i++) { highlightSet.add(`${row}-${i}`); highlightSet.add(`${i}-${col}`); }
+            const br = Math.floor(row / 3) * 3, bc = Math.floor(col / 3) * 3;
+            for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) highlightSet.add(`${br + r}-${bc + c}`);
+          }
+
+          const renderCell = (row, col) => {
+            const key = `${row}-${col}`;
+            const val = board[row][col];
+            const isGiven = puzzle[row][col] !== 0;
+            const isSel = !paused && selected?.row === row && selected?.col === col;
+            const isHl = !paused && highlightSet.has(key);
+            const isConflict = !paused && conflicts.has(key);
+            const isBlock = (Math.floor(row / 3) + Math.floor(col / 3)) % 2 === 0;
+            const borderRight = (col + 1) % 3 === 0 && col !== 8 ? `2.5px solid ${theme.primary}` : `1px solid ${theme.border}`;
+            const borderBottom = (row + 1) % 3 === 0 && row !== 8 ? `2.5px solid ${theme.primary}` : `1px solid ${theme.border}`;
+            let bg = isBlock ? theme.cellBlock : theme.cellBg;
+            if (isHl) bg = theme.cellHighlight; if (isSel) bg = theme.cellSelected; if (isConflict) bg = theme.errorBg;
+
+            return (
+              <div key={key} onClick={() => { if (!paused) setSelected({ row, col }); }}
+                style={{ background: bg, borderRight, borderBottom, display: "flex", alignItems: "center", justifyContent: "center", cursor: paused ? "default" : isGiven ? "default" : "pointer", transition: "background 0.1s", userSelect: "none", WebkitTapHighlightColor: "transparent" }}>
+                {!paused && val !== 0 && (
+                  <span style={{ fontSize: "clamp(13px,3.5vw,22px)", fontWeight: isGiven ? 700 : 500, color: isConflict ? theme.errorText : isGiven ? theme.given : theme.user, lineHeight: 1 }}>
+                    {val}
+                  </span>
+                )}
+              </div>
+            );
+          };
+
+          const timerDisplay = timerStarted ? formatTime(timer) : "--:--";
+          const currentBest = bestTimes[difficulty];
+          const diffLabel = difficulty.charAt(0).toUpperCase() + difficulty.slice(1);
+          const btn = { fontFamily: "serif", cursor: "pointer", transition: "all 0.15s" };
+
+          return (
+            <div style={{ minHeight: "100vh", background: theme.bg, fontFamily: "serif", color: theme.text, display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <div style={{ width: "100%", maxWidth: 420, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 12px 8px" }}>
+                <div style={{ fontSize: 24, fontWeight: "bold", letterSpacing: 2 }}>sudoku</div>
+                <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", background: theme.primaryLight, border: `1px solid ${theme.border}`, borderRadius: 20, overflow: "hidden" }}>
+                    <span style={{ padding: "4px 12px", fontSize: 13, fontVariantNumeric: "tabular-nums", color: theme.text, minWidth: 52, textAlign: "center" }}>{timerDisplay}</span>
+                    {timerStarted && !solved && (
+                      <button onClick={togglePause} style={{ ...btn, background: "transparent", border: "none", borderLeft: `1px solid ${theme.border}`, padding: "4px 10px", fontSize: 12, color: theme.textLight }}>{paused ? "▶" : "⏸"}</button>
+                    )}
+                  </div>
+                  <button style={{ ...btn, background: theme.primaryLight, border: `1px solid ${theme.border}`, borderRadius: 8, width: 32, height: 32 }} onClick={() => setShowSettings(true)}>⚙️</button>
+                </div>
+              </div>
+
+              <div style={{ width: "100%", maxWidth: 420, padding: "0 12px 8px", display: "flex", justifyContent: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, background: currentBest !== null ? theme.goldLight : theme.surface, border: `1px solid ${currentBest !== null ? theme.goldBorder : theme.border}`, borderRadius: 20, padding: "4px 16px" }}>
+                  <span style={{ fontSize: 13 }}>🏆</span>
+                  <span style={{ fontSize: 11, color: theme.textLight, textTransform: "uppercase" }}>Best · {diffLabel}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: currentBest !== null ? theme.gold : theme.textLight }}>{formatTime(currentBest)}</span>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 6, padding: "0 12px 8px", width: "100%", maxWidth: 420, justifyContent: "center" }}>
+                {["easy", "medium", "hard"].map((d) => (
+                  <button key={d} style={{ ...btn, background: difficulty === d ? theme.primary : theme.surface, color: difficulty === d ? "#fff" : theme.textLight, border: `1px solid ${theme.border}`, borderRadius: 20, padding: "5px 14px", fontSize: 13 }} onClick={() => { setDifficulty(d); startGame(d); }}>{d}</button>
+                ))}
+                <button style={{ ...btn, background: theme.secondary, color: "#fff", border: "none", borderRadius: 20, padding: "5px 14px", fontSize: 13 }} onClick={() => startGame()}>New Game</button>
+              </div>
+
+              <div style={{ padding: "4px 12px", width: "100%", maxWidth: 420, position: "relative" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(9, 1fr)", border: `2.5px solid ${theme.primary}`, borderRadius: 12, overflow: "hidden", boxShadow: `0 8px 28px ${theme.shadow}`, aspectRatio: "1/1" }}>
+                  {Array.from({ length: 9 }, (_, r) => Array.from({ length: 9 }, (_, c) => renderCell(r, c)))}
+                </div>
+                {paused && (
+                  <div onClick={togglePause} style={{ position: "absolute", inset: 0, margin: "4px 12px", background: "rgba(255,255,255,0.8)", backdropFilter: "blur(4px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 10 }}>
+                    <div style={{ fontSize: 32 }}>⏸</div>
+                    <div style={{ fontSize: 13 }}>Tap to resume</div>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ width: "100%", maxWidth: 420, padding: "8px 12px", opacity: paused ? 0.4 : 1 }}>
+                <div style={{ background: theme.numpad, borderRadius: 14, padding: "12px 8px", border: `1px solid ${theme.border}` }}>
+                  <div style={{ display: "flex", gap: 6, justifyContent: "center", marginBottom: 6 }}>
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <button key={n} style={{ ...btn, flex: 1, aspectRatio: "1", background: theme.cellBg, border: `1px solid ${theme.border}`, borderRadius: 10, fontSize: 18 }} onClick={() => enterNumber(n)}>{n}</button>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, justifyContent: "center", marginBottom: 8 }}>
+                    {[6, 7, 8, 9].map((n) => (
+                      <button key={n} style={{ ...btn, flex: 1, aspectRatio: "1", background: theme.cellBg, border: `1px solid ${theme.border}`, borderRadius: 10, fontSize: 18 }} onClick={() => enterNumber(n)}>{n}</button>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                    <button style={{ ...btn, background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "7px 16px" }} onClick={clearCell}>✕ Clear</button>
+                    <button style={{ ...btn, background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "7px 16px" }} onClick={undo}>↩ Undo</button>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ width: "100%", maxWidth: 420, margin: "6px 12px", background: theme.adBg, border: `1px dashed ${theme.adBorder}`, borderRadius: 10, height: 44, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>📢 Advertisement</div>
+
+              {showSettings && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowSettings(false)}>
+                  <div style={{ background: theme.surface, borderRadius: 20, padding: "24px 20px", maxWidth: 300, width: "90%" }} onClick={(e) => e.stopPropagation()}>
+                    <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 16, textAlign: "center" }}>Settings</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {Object.entries(THEMES).map(([key, th]) => (
+                        <button key={key} onClick={() => setThemeKey(key)} style={{ ...btn, background: th.primaryLight, border: `2px solid ${themeKey === key ? th.primary : th.border}`, borderRadius: 10, padding: "9px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                          <span style={{ width: 18, height: 18, borderRadius: "50%", background: th.primary }} /> {th.name}
+                        </button>
+                      ))}
+                    </div>
+                    <button style={{ ...btn, background: theme.primary, color: "#fff", border: "none", borderRadius: 12, padding: "10px", width: "100%", marginTop: 16 }} onClick={() => setShowSettings(false)}>Done</button>
+                  </div>
+                </div>
+              )}
+
+              {showCongrats && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <div style={{ background: theme.surface, borderRadius: 24, padding: "28px 24px", maxWidth: 310, width: "90%", textAlign: "center" }}>
+                    <div style={{ fontSize: 40 }}>{isNewRecord ? "🏆" : "🎉"}</div>
+                    <div style={{ fontSize: 21, fontWeight: 700 }}>{isNewRecord ? "New Record!" : "Solved!"}</div>
+                    <div style={{ background: theme.primaryLight, borderRadius: 14, padding: "12px", margin: "16px 0" }}>
+                      <div style={{ fontSize: 32, fontWeight: 700 }}>{formatTime(finalTime)}</div>
+                    </div>
+                    <button style={{ ...btn, background: theme.primary, color: "#fff", borderRadius: 14, padding: "11px", width: "100%" }} onClick={() => startGame()}>Play Again</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<SudokuApp />);
+    </script>
+</body>
+</html>
